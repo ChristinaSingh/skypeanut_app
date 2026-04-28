@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1046131937637",
+    "project_id": "skypeanut-app",
+    "storage_bucket": "skypeanut-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1046131937637:android:15f45d7e711be9087d918c",
+        "android_client_info": {
+          "package_name": "com.skypeanut.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAdD0PYzjrhrqsFmjPmZKhS89SUEgtZp3A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

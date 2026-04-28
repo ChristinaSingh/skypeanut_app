@@ -1,0 +1,93 @@
+part of 'app_pages.dart';
+// DO NOT EDIT. This is code generated via package:get_cli/get_cli.dart
+
+abstract class Routes {
+  Routes._();
+  static const HOME = _Paths.HOME;
+  static const SPLASH_LITE_SCREEN = _Paths.SPLASH_LITE_SCREEN;
+  static const GET_STARTED_PAGE_SCREEN = _Paths.GET_STARTED_PAGE_SCREEN;
+  static const ON_BOARDING_SCREEN = _Paths.ON_BOARDING_SCREEN;
+  static const LOGIN_SCREEN = _Paths.LOGIN_SCREEN;
+  static const SIGN_UP = _Paths.SIGN_UP;
+  static const LOADER_SCREEN = _Paths.LOADER_SCREEN;
+  static const OTP_VERIFY_SCREEN = _Paths.OTP_VERIFY_SCREEN;
+  static const SUCCESSFULLY_SCREEN = _Paths.SUCCESSFULLY_SCREEN;
+  static const NAV_BAR_SCREEN = _Paths.NAV_BAR_SCREEN;
+  static const WEATHER_SCREEN = _Paths.WEATHER_SCREEN;
+  static const NOTAMS_SCREEN = _Paths.NOTAMS_SCREEN;
+  static const ROUTES_SCREEN = _Paths.ROUTES_SCREEN;
+  static const SETTING_SCREEN = _Paths.SETTING_SCREEN;
+  static const MAP_ROUTES_PAGE = _Paths.MAP_ROUTES_PAGE;
+  static const MAP_ROUTES_FULL_PAGE = _Paths.MAP_ROUTES_FULL_PAGE;
+  static const REFERRAL_SCREEN = _Paths.REFERRAL_SCREEN;
+  static const AI_CHAT_SCREEN = _Paths.AI_CHAT_SCREEN;
+  static const UPDATE_PROFILE_SCREEN = _Paths.UPDATE_PROFILE_SCREEN;
+  static const PRIVACY_POLICY_SCREEN = _Paths.PRIVACY_POLICY_SCREEN;
+  static const SUPPORT_SCREEN = _Paths.SUPPORT_SCREEN;
+  static const WEATHER_DETAILS_SCREEN = _Paths.WEATHER_DETAILS_SCREEN;
+  static const N_O_T_A_M_S_DETAILS_SCREEN = _Paths.N_O_T_A_M_S_DETAILS_SCREEN;
+  static const QUESTION_SCREEN = _Paths.QUESTION_SCREEN;
+  static const FORGOT_PASSWORD_SCREEN = _Paths.FORGOT_PASSWORD_SCREEN;
+  static const SEND_OTP_PASSWORD = _Paths.SEND_OTP_PASSWORD;
+  static const UPDATE_PASSWORD_SCREEN = _Paths.UPDATE_PASSWORD_SCREEN;
+  static const UP_COMMING_FORCAST_SCREEM = _Paths.UP_COMMING_FORCAST_SCREEM;
+  static const SEARCH_ROUTES_SCREEN = _Paths.SEARCH_ROUTES_SCREEN;
+  static const NOTIFICATION_SCREEN = _Paths.NOTIFICATION_SCREEN;
+  static const PACKAGES_PLANS_CREADIT_SCREEN =
+      _Paths.PACKAGES_PLANS_CREADIT_SCREEN;
+  static const WEATHER_SETTINGS_SCREEN = _Paths.WEATHER_SETTINGS_SCREEN;
+  static const CREDITS_SCREEN = _Paths.CREDITS_SCREEN;
+  static const SETTING_FOR_BACK = _Paths.SETTING_FOR_BACK;
+  static const NOTAM_FOR_BACK = _Paths.NOTAM_FOR_BACK;
+  static const REGISTRATION = _Paths.REGISTRATION;
+  static const FLIGHT_MAP = _Paths.FLIGHT_MAP;
+  static const AGREEMENT_SCREEN = _Paths.AGREEMENT_SCREEN;
+  static const NOTIFICATION_FOR_NAV_BAR = _Paths.NOTIFICATION_FOR_NAV_BAR;
+  static const REG = _Paths.REG;
+  static const AIR_QUILITY = _Paths.AIR_QUILITY;
+}
+
+abstract class _Paths {
+  _Paths._();
+  static const HOME = '/home';
+  static const SPLASH_LITE_SCREEN = '/splash-lite-screen';
+  static const GET_STARTED_PAGE_SCREEN = '/get-started-page-screen';
+  static const ON_BOARDING_SCREEN = '/on-boarding-screen';
+  static const LOGIN_SCREEN = '/login-screen';
+  static const SIGN_UP = '/sign-up';
+  static const LOADER_SCREEN = '/loader-screen';
+  static const OTP_VERIFY_SCREEN = '/otp-verify-screen';
+  static const SUCCESSFULLY_SCREEN = '/successfully-screen';
+  static const NAV_BAR_SCREEN = '/nav-bar-screen';
+  static const WEATHER_SCREEN = '/weather-screen';
+  static const NOTAMS_SCREEN = '/notams-screen';
+  static const ROUTES_SCREEN = '/routes-screen';
+  static const SETTING_SCREEN = '/setting-screen';
+  static const MAP_ROUTES_PAGE = '/map-routes-page';
+  static const MAP_ROUTES_FULL_PAGE = '/map-routes-full-page';
+  static const REFERRAL_SCREEN = '/referral-screen';
+  static const AI_CHAT_SCREEN = '/ai-chat-screen';
+  static const UPDATE_PROFILE_SCREEN = '/update-profile-screen';
+  static const PRIVACY_POLICY_SCREEN = '/privacy-policy-screen';
+  static const SUPPORT_SCREEN = '/support-screen';
+  static const WEATHER_DETAILS_SCREEN = '/weather-details-screen';
+  static const N_O_T_A_M_S_DETAILS_SCREEN = '/n-o-t-a-m-s-details-screen';
+  static const QUESTION_SCREEN = '/question-screen';
+  static const FORGOT_PASSWORD_SCREEN = '/forgot-password-screen';
+  static const SEND_OTP_PASSWORD = '/send-otp-password';
+  static const UPDATE_PASSWORD_SCREEN = '/update-password-screen';
+  static const UP_COMMING_FORCAST_SCREEM = '/up-comming-forcast-screem';
+  static const SEARCH_ROUTES_SCREEN = '/search-routes-screen';
+  static const NOTIFICATION_SCREEN = '/notification-screen';
+  static const PACKAGES_PLANS_CREADIT_SCREEN = '/packages-plans-creadit-screen';
+  static const WEATHER_SETTINGS_SCREEN = '/weather-settings-screen';
+  static const CREDITS_SCREEN = '/credits-screen';
+  static const SETTING_FOR_BACK = '/setting-for-back';
+  static const NOTAM_FOR_BACK = '/notam-for-back';
+  static const REGISTRATION = '/registration';
+  static const FLIGHT_MAP = '/flight-map';
+  static const AGREEMENT_SCREEN = '/agreement-screen';
+  static const NOTIFICATION_FOR_NAV_BAR = '/notification-for-nav-bar';
+  static const REG = '/reg';
+  static const AIR_QUILITY = '/air-quility';
+}

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>1046131937637-h4bev7absomga6blac2vj12rlnu1bd1v.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.1046131937637-h4bev7absomga6blac2vj12rlnu1bd1v</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDZ_yj9QyPqTP7u46qWe-G1OJDHhJ_gRgM</string>
+	<key>GCM_SENDER_ID</key>
+	<string>1046131937637</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.skypeanut.app</string>
+	<key>PROJECT_ID</key>
+	<string>skypeanut-app</string>
+	<key>STORAGE_BUCKET</key>
+	<string>skypeanut-app.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:1046131937637:ios:0fc543e5708d2c607d918c</string>
+</dict>
+</plist>
