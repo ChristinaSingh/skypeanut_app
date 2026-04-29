@@ -1,5 +1,3 @@
-// lib/common/flight_detail_service.dart
-
 import 'dart:convert';
 import 'dart:developer';
 import 'package:http/http.dart' as http;
@@ -83,8 +81,7 @@ class WeatherInfo {
     return '${windDirectionDeg}° / ${windSpeedKt}kt$gust';
   }
 
-  String get tempFormatted =>
-      temperatureC != null ? '${temperatureC}°C' : '—';
+  String get tempFormatted => temperatureC != null ? '${temperatureC}°C' : '—';
 
   String get visFormatted {
     if (visibilityM == null) return '—';
@@ -97,9 +94,9 @@ class WeatherInfo {
 }
 
 class CloudLayer {
-  final int altitude; // hundreds of feet
-  final String type;  // FEW, SCT, BKN, OVC
-  final String? modifier; // CB, TCU
+  final int altitude;
+  final String type;
+  final String? modifier;
 
   const CloudLayer({
     required this.altitude,
@@ -108,10 +105,10 @@ class CloudLayer {
   });
 
   factory CloudLayer.fromJson(Map<String, dynamic> j) => CloudLayer(
-    altitude: (j['altitude'] as num?)?.toInt() ?? 0,
-    type: (j['type'] ?? '') as String,
-    modifier: j['modifier'] as String?,
-  );
+        altitude: (j['altitude'] as num?)?.toInt() ?? 0,
+        type: (j['type'] ?? '') as String,
+        modifier: j['modifier'] as String?,
+      );
 
   String get formatted {
     final mod = modifier != null ? ' ($modifier)' : '';
@@ -182,9 +179,9 @@ class RouteWaypoint {
   const RouteWaypoint(this.latitude, this.longitude);
 
   factory RouteWaypoint.fromJson(Map<String, dynamic> j) => RouteWaypoint(
-    _d(j['latitude']),
-    _d(j['longitude']),
-  );
+        _d(j['latitude']),
+        _d(j['longitude']),
+      );
 
   static double _d(dynamic v) {
     if (v == null) return 0.0;
@@ -216,10 +213,10 @@ class FlightRoute {
         .toList();
 
     return FlightRoute(
-      departure: AirportDetail.fromJson(
-          j['departure'] as Map<String, dynamic>? ?? {}),
-      arrival: AirportDetail.fromJson(
-          j['arrival'] as Map<String, dynamic>? ?? {}),
+      departure:
+          AirportDetail.fromJson(j['departure'] as Map<String, dynamic>? ?? {}),
+      arrival:
+          AirportDetail.fromJson(j['arrival'] as Map<String, dynamic>? ?? {}),
       distanceKm: _d(j['distance_km']),
       distanceNm: _d(j['distance_nm']),
       waypoints: wps,
@@ -310,14 +307,13 @@ class FlightPopup {
     AirportDetail? dep, arr;
     if (route['departure'] != null) {
       try {
-        dep = AirportDetail.fromJson(
-            route['departure'] as Map<String, dynamic>);
+        dep =
+            AirportDetail.fromJson(route['departure'] as Map<String, dynamic>);
       } catch (_) {}
     }
     if (route['arrival'] != null) {
       try {
-        arr = AirportDetail.fromJson(
-            route['arrival'] as Map<String, dynamic>);
+        arr = AirportDetail.fromJson(route['arrival'] as Map<String, dynamic>);
       } catch (_) {}
     }
 
@@ -408,15 +404,15 @@ class FlightDetailService {
 
       log('[FlightDetailService] popup GET $uri');
 
-      final res = await _client
-          .get(uri, headers: {'accept': 'application/json'})
-          .timeout(const Duration(seconds: 180));
+      final res = await _client.get(uri, headers: {
+        'accept': 'application/json'
+      }).timeout(const Duration(seconds: 10));
 
       if (res.statusCode == 200) {
         final body = jsonDecode(res.body) as Map<String, dynamic>;
         if (body['status'] != '1') return null;
-        final popup = FlightPopup.fromJson(
-            body['data'] as Map<String, dynamic>);
+        final popup =
+            FlightPopup.fromJson(body['data'] as Map<String, dynamic>);
         _popupCache[callsign] = _CachedPopup(popup);
         return popup;
       }
@@ -442,15 +438,15 @@ class FlightDetailService {
 
       log('[FlightDetailService] route GET $uri');
 
-      final res = await _client
-          .get(uri, headers: {'accept': 'application/json'})
-          .timeout(const Duration(seconds: 180));
+      final res = await _client.get(uri, headers: {
+        'accept': 'application/json'
+      }).timeout(const Duration(seconds: 12));
 
       if (res.statusCode == 200) {
         final body = jsonDecode(res.body) as Map<String, dynamic>;
         if (body['status'] != '1') return null;
-        final route = FlightRoute.fromJson(
-            body['route'] as Map<String, dynamic>);
+        final route =
+            FlightRoute.fromJson(body['route'] as Map<String, dynamic>);
         _routeCache[callsign] = _CachedRoute(route);
         return route;
       }

@@ -137,5 +137,5 @@ Future<void> main() async {
   );
 
   Stripe.publishableKey =
-      '';
+      'YOUR_STRIPE_KEY';
 }

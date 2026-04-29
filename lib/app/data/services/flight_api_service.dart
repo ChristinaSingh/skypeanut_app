@@ -16,10 +16,14 @@ class FlightApiService {
   static const _base =
       'https://python.aitechnotech.in/skypeanut-api/api/v1/map';
 
-  final http.Client _client;
+  http.Client _client;
 
-  FlightApiService({http.Client? client})
-      : _client = client ?? http.Client();
+  FlightApiService({http.Client? client}) : _client = client ?? http.Client();
+
+  void cancelActiveRequests() {
+    _client.close();
+    _client = http.Client();
+  }
 
   // ── Fetch flights in bounding box ─────────────────────────────────────────
   Future<List<Flight>> fetchFlights({
@@ -42,9 +46,9 @@ class FlightApiService {
     log('[FlightApiService] GET $uri');
 
     try {
-      final res = await _client
-          .get(uri, headers: {'accept': 'application/json'})
-          .timeout(const Duration(seconds: 10));
+      final res = await _client.get(uri, headers: {
+        'accept': 'application/json'
+      }).timeout(const Duration(seconds: 10));
 
       if (res.statusCode == 200) {
         final body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -81,9 +85,9 @@ class FlightApiService {
     );
 
     try {
-      final res = await _client
-          .get(uri, headers: {'accept': 'application/json'})
-          .timeout(const Duration(seconds: 10));
+      final res = await _client.get(uri, headers: {
+        'accept': 'application/json'
+      }).timeout(const Duration(seconds: 10));
 
       if (res.statusCode == 200) {
         final body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -125,14 +129,14 @@ class AirportInfo {
   });
 
   factory AirportInfo.fromJson(Map<String, dynamic> j) => AirportInfo(
-    iataCode: (j['iata_code'] ?? '') as String,
-    icaoCode: (j['icao_code'] ?? '') as String,
-    name: (j['name'] ?? '') as String,
-    country: (j['country'] ?? '') as String,
-    latitude: _d(j['latitude']),
-    longitude: _d(j['longitude']),
-    timezone: (j['timezone'] ?? '') as String,
-  );
+        iataCode: (j['iata_code'] ?? '') as String,
+        icaoCode: (j['icao_code'] ?? '') as String,
+        name: (j['name'] ?? '') as String,
+        country: (j['country'] ?? '') as String,
+        latitude: _d(j['latitude']),
+        longitude: _d(j['longitude']),
+        timezone: (j['timezone'] ?? '') as String,
+      );
 
   static double _d(dynamic v) {
     if (v == null) return 0.0;

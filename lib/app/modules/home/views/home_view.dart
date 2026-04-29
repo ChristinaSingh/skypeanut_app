@@ -65,10 +65,47 @@ class HomeView extends GetView<HomeController> {
           children: [
             // Background image
             Positioned.fill(
-              child: Image.asset(
-                'assets/images/city_view_bg.png', // Your background image
-                fit: BoxFit.cover,
-              ),
+              child: Obx(() {
+                controller.count.value; // reactive trigger
+
+                final isLoading = controller.inAsyncCall.value;
+                final imagePath = controller.isNightTime.value
+                    ? 'assets/images/night_city_view.png'
+                    : 'assets/images/city_view_bg.png';
+
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Gradient purple background
+                    Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            gradientPurple4, // Dark purple top
+                            gradientPurple5,
+                            gradientPurple6,
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Image fades in smoothly
+                    AnimatedOpacity(
+                      duration: const Duration(milliseconds: 1200),
+                      curve: Curves.easeInOut,
+                      opacity: isLoading ? 0.0 : 1.0,
+                      child: Image.asset(
+                        imagePath,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                      ),
+                    ),
+                  ],
+                );
+              }),
             ),
             SafeArea(
               child: RefreshIndicator(
@@ -321,13 +358,14 @@ class HomeView extends GetView<HomeController> {
                                   width: 4.px,
                                 ),
                                 Obx(() {
-                                  controller.count.value;
+                                  controller.count.value; // reactive trigger
                                   return Text(
-                                    controller.rawDate.value ?? "",
+                                    controller.rawDate.value,
                                     style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 16.px,
-                                        fontWeight: FontWeight.w300),
+                                      color: Colors.white,
+                                      fontSize: 16.px,
+                                      fontWeight: FontWeight.w300,
+                                    ),
                                   );
                                 }),
                               ],
@@ -694,12 +732,28 @@ class HomeView extends GetView<HomeController> {
     });
   }
 
+  Color getTemperatureColor(double temp) {
+    if (temp <= 15) {
+      return Colors.blue; // Cold
+    } else if (temp >= 30) {
+      return Colors.amber; // Hot
+    } else {
+      return Colors.white; // Normal
+    }
+  }
+
   Widget _weatherIcon(
-      String icon, String label, String value, RxString temperatureUnit) {
+    String icon,
+    String label,
+    String value,
+    RxString temperatureUnit,
+  ) {
     String cleanValue = value.replaceAll(RegExp(r'[^0-9.]'), '');
+    double tempValue = double.tryParse(cleanValue) ?? 0;
+
     return controller.inAsyncCall.value
         ? Shimmer.fromColors(
-            baseColor: Color(0xFF3C3C98).withOpacity(.2.px),
+            baseColor: Color(0xFF3C3C98).withOpacity(.2),
             highlightColor: Colors.white.withOpacity(0.4),
             child: Container(
               height: 40,
@@ -711,7 +765,6 @@ class HomeView extends GetView<HomeController> {
                   BoxShadow(
                     color: Colors.white.withOpacity(0.1),
                     blurRadius: 5,
-                    spreadRadius: 0,
                     offset: Offset(0, 4),
                   ),
                 ],
@@ -724,24 +777,33 @@ class HomeView extends GetView<HomeController> {
                 scale: 1.2,
                 duration: Duration(seconds: 2),
                 child: CommonWidgets.appIconsSvg(
-                    assetName: icon, height: 30.px, width: 30.px),
+                  assetName: icon,
+                  height: 30,
+                  width: 30,
+                ),
               ),
               SizedBox(height: 6),
               Text(
                 label,
                 style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500),
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
+
+              /// 🌡️ TEMPERATURE CASE (UPDATED)
               label == "Temperature"
                   ? Text(
                       temperatureUnit.value == "°F" ? '$value °F' : '$value °C',
                       style: TextStyle(
-                          color: yellowColor,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold),
+                        color: getTemperatureColor(tempValue), // 🔥 MAIN CHANGE
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
                     )
+
+                  /// PRESSURE
                   : label == "Pressure"
                       ? Text(
                           temperatureUnit.value == "inHg"
@@ -753,6 +815,8 @@ class HomeView extends GetView<HomeController> {
                             fontWeight: FontWeight.bold,
                           ),
                         )
+
+                      /// DEW
                       : label == "Dew"
                           ? Text(
                               temperatureUnit.value == "°F"
@@ -764,6 +828,8 @@ class HomeView extends GetView<HomeController> {
                                 fontWeight: FontWeight.bold,
                               ),
                             )
+
+                          /// FORECAST
                           : label == "Forecast"
                               ? Text(
                                   value,
@@ -773,6 +839,8 @@ class HomeView extends GetView<HomeController> {
                                     fontWeight: FontWeight.bold,
                                   ),
                                 )
+
+                              /// VISIBILITY
                               : label == "Visibility"
                                   ? Text(
                                       temperatureUnit.value == "KM"
@@ -1572,8 +1640,8 @@ class _AqiShimmerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Shimmer.fromColors(
-      baseColor: primary3Color.withOpacity(0.20),
-      highlightColor: Colors.white.withOpacity(0.35),
+      baseColor: Color(0xFF3C3C98).withOpacity(.2.px),
+      highlightColor: Colors.white.withOpacity(0.4),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Container(

@@ -110,10 +110,11 @@ class _MapView extends GetView<FlightController> {
         // ── Google Map ──────────────────────────────────────────────────────
         _GoogleMapLayer(theme: theme),
 
-        // ── Search bar (full mode only) ─────────────────────────────────────
-        if (!miniSize)
+        // ── Route loading indicator ─────────────────────────────────────────
+        if (!miniSize) _RouteLoadingIndicator(theme: theme),
 
-          _SearchOverlay(theme: theme),
+        // ── Search bar (full mode only) ─────────────────────────────────────
+        if (!miniSize) _SearchOverlay(theme: theme),
 
         // ── Top bar (full mode only) ────────────────────────────────────────
         if (!miniSize)
@@ -175,7 +176,7 @@ class _MapView extends GetView<FlightController> {
               right: 0,
               child: FlightInfoSheet(
                 theme: theme,
-                onClose: controller.clearSelection,
+                onClose: controller.closeFlightSheet,
               ),
             );
           }),
@@ -189,6 +190,71 @@ class _MapView extends GetView<FlightController> {
           ),
       ],
     );
+  }
+}
+
+// ─── Route Loading Indicator ──────────────────────────────────
+class _RouteLoadingIndicator extends GetView<FlightController> {
+  final AppThemeController theme;
+
+  const _RouteLoadingIndicator({required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      if (!controller.isLoadingRoute.value) return const SizedBox.shrink();
+
+      return Positioned(
+        top: MediaQuery.of(context).padding.top + 100,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: AnimatedOpacity(
+            opacity: controller.isLoadingRoute.value ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 300),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: theme.card.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+                border: Border.all(
+                  color: theme.primary.withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: theme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Loading route…',
+                    style: TextStyle(
+                      color: theme.textMain,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    });
   }
 }
 
@@ -249,7 +315,7 @@ class _SearchOverlay extends GetView<FlightController> {
       return GestureDetector(
         onTap: controller.closeSearch,
         child: Container(
-          margin: EdgeInsetsGeometry.only(top: 120),
+          margin: const EdgeInsets.only(top: 120),
           color: Colors.transparent,
           child: SafeArea(
             child: Column(
@@ -286,7 +352,8 @@ class _SearchOverlay extends GetView<FlightController> {
                                     fontWeight: FontWeight.w600,
                                   ),
                                   decoration: InputDecoration(
-                                    hintText: 'Search flight (e.g. AI2119, N88BG)',
+                                    hintText:
+                                        'Search flight (e.g. AI2119, N88BG)',
                                     hintStyle: TextStyle(
                                       color: theme.textHint,
                                       fontSize: 14,
@@ -294,7 +361,8 @@ class _SearchOverlay extends GetView<FlightController> {
                                     border: InputBorder.none,
                                     isDense: true,
                                   ),
-                                  textCapitalization: TextCapitalization.characters,
+                                  textCapitalization:
+                                      TextCapitalization.characters,
                                   onChanged: controller.onSearchChanged,
                                   onSubmitted: controller.submitSearch,
                                 ),
@@ -311,7 +379,6 @@ class _SearchOverlay extends GetView<FlightController> {
                           ),
                         ),
                         Divider(color: theme.divider, height: 1),
-                        // Search hints
                         Container(
                           padding: const EdgeInsets.all(16),
                           child: Column(
@@ -326,9 +393,11 @@ class _SearchOverlay extends GetView<FlightController> {
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              _searchHint(theme, 'Flight number', 'AI2119, BA142'),
+                              _searchHint(
+                                  theme, 'Flight number', 'AI2119, BA142'),
                               const SizedBox(height: 4),
-                              _searchHint(theme, 'Aircraft registration', 'N88BG, VT-ABC'),
+                              _searchHint(theme, 'Aircraft registration',
+                                  'N88BG, VT-ABC'),
                               const SizedBox(height: 4),
                               _searchHint(theme, 'ICAO24 hex code', 'a1b2c3'),
                             ],
@@ -401,7 +470,6 @@ class _MapThemePanel extends GetView<FlightController> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // ── Label ───────────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
@@ -425,10 +493,7 @@ class _MapThemePanel extends GetView<FlightController> {
                 ],
               ),
             ),
-
             const SizedBox(height: 2),
-
-            // ── Toggle row ─────────────────────────────────────────────────
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -474,12 +539,9 @@ class _ThemeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedBg = theme.isDark
-        ? const Color(0xFF0D47A1)
-        : const Color(0xFFE8F4FF);
-    final selectedFg = theme.isDark
-        ? Colors.white
-        : const Color(0xFF0D47A1);
+    final selectedBg =
+        theme.isDark ? const Color(0xFF0D47A1) : const Color(0xFFE8F4FF);
+    final selectedFg = theme.isDark ? Colors.white : const Color(0xFF0D47A1);
 
     return GestureDetector(
       onTap: onTap,
@@ -514,7 +576,7 @@ class _ThemeTab extends StatelessWidget {
   }
 }
 
-// ─── Google Map Layer ─────────────────────────────────────────
+// ─── Google Map Layer (with polylines) ────────────────────────
 class _GoogleMapLayer extends GetView<FlightController> {
   final AppThemeController theme;
 
@@ -522,28 +584,35 @@ class _GoogleMapLayer extends GetView<FlightController> {
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() => GoogleMap(
-      onMapCreated: controller.onMapCreated,
-      onCameraMove: controller.onCameraMove,
-      onCameraIdle: controller.onCameraIdle,
-      onTap: (_) => controller.clearSelection(),
-      initialCameraPosition: CameraPosition(
-        target: controller.initialCameraPosition,
-        zoom: controller.initialZoom,
-      ),
-      markers: controller.markers.value,
-      myLocationEnabled: true,
-      myLocationButtonEnabled: false,
-      zoomControlsEnabled: false,
-      compassEnabled: false,
-      mapToolbarEnabled: false,
-      trafficEnabled: false,
-      buildingsEnabled: false,
-      indoorViewEnabled: false,
-      rotateGesturesEnabled: true,
-      tiltGesturesEnabled: false,
-      mapType: MapType.normal,
-    ));
+    return Obx(() {
+      // React to both markers and polylines changes
+      final currentMarkers = controller.markers.value;
+      final currentPolylines = controller.polylines.value;
+
+      return GoogleMap(
+        onMapCreated: controller.onMapCreated,
+        onCameraMove: controller.onCameraMove,
+        onCameraIdle: controller.onCameraIdle,
+        onTap: (_) => controller.closeFlightSheet(),
+        initialCameraPosition: CameraPosition(
+          target: controller.initialCameraPosition,
+          zoom: controller.initialZoom,
+        ),
+        markers: currentMarkers,
+        polylines: currentPolylines,
+        myLocationEnabled: true,
+        myLocationButtonEnabled: false,
+        zoomControlsEnabled: false,
+        compassEnabled: false,
+        mapToolbarEnabled: false,
+        trafficEnabled: false,
+        buildingsEnabled: false,
+        indoorViewEnabled: false,
+        rotateGesturesEnabled: true,
+        tiltGesturesEnabled: false,
+        mapType: MapType.normal,
+      );
+    });
   }
 }
 
@@ -569,7 +638,6 @@ class _TopBar extends GetView<FlightController> {
         ),
         child: Row(
           children: [
-            // Back button
             GestureDetector(
               onTap: () => Get.back(),
               child: AnimatedContainer(
@@ -587,8 +655,6 @@ class _TopBar extends GetView<FlightController> {
               ),
             ),
             const SizedBox(width: 10),
-
-            // Title
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -611,10 +677,7 @@ class _TopBar extends GetView<FlightController> {
                 ),
               ],
             ),
-
             const Spacer(),
-
-            // Search button
             GestureDetector(
               onTap: controller.openSearch,
               child: AnimatedContainer(
@@ -632,7 +695,6 @@ class _TopBar extends GetView<FlightController> {
               ),
             ),
             const SizedBox(width: 8),
-
             _FlightCountBadge(theme: theme),
           ],
         ),

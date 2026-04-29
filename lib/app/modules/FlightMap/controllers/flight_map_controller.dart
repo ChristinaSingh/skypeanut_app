@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -14,6 +15,122 @@ import '../../../data/services/flight_api_service.dart';
 
 enum MapLoadState { initial, locating, ready, error }
 
+// ── Isolate-safe polyline builder ─────────────────────────────────────────────
+// Runs on a background isolate via compute(), zero UI thread impact.
+class _PolylineInput {
+  final List<List<double>> waypoints; // [[lat,lng], ...]
+  final double aircraftLat;
+  final double aircraftLng;
+  final double arrivalLat;
+  final double arrivalLng;
+  final double departureLat;
+  final double departureLng;
+
+  const _PolylineInput({
+    required this.waypoints,
+    required this.aircraftLat,
+    required this.aircraftLng,
+    required this.arrivalLat,
+    required this.arrivalLng,
+    required this.departureLat,
+    required this.departureLng,
+  });
+}
+
+class _PolylineResult {
+  final List<List<double>> fullPoints;
+
+  const _PolylineResult({required this.fullPoints});
+}
+
+// Top-level function required by compute()
+_PolylineResult _buildPolylinesInIsolate(_PolylineInput input) {
+  final fullPath = _routeThroughAircraft(input);
+
+  return _PolylineResult(fullPoints: _downsample(fullPath, 48));
+}
+
+List<List<double>> _routeThroughAircraft(_PolylineInput input) {
+  final route = _routeWithEndpoints(input);
+  final aircraft = [input.aircraftLat, input.aircraftLng];
+
+  if (!_isValidPoint(aircraft)) return route;
+  if (route.length < 2) return [aircraft, ...route];
+
+  var closestIndex = 0;
+  var closestDistance = double.infinity;
+  for (var i = 0; i < route.length; i++) {
+    final distance = _distSq(route[i], aircraft);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = i;
+    }
+  }
+
+  final anchored = <List<double>>[];
+  for (var i = 0; i <= closestIndex && i < route.length; i++) {
+    anchored.add(route[i]);
+  }
+  if (anchored.isEmpty || _distSq(anchored.last, aircraft) > 0.000001) {
+    anchored.add(aircraft);
+  }
+  for (var i = closestIndex + 1; i < route.length; i++) {
+    anchored.add(route[i]);
+  }
+  return anchored;
+}
+
+List<List<double>> _routeWithEndpoints(_PolylineInput input) {
+  final departure = [input.departureLat, input.departureLng];
+  final arrival = [input.arrivalLat, input.arrivalLng];
+  final route = <List<double>>[];
+
+  if (_isValidPoint(departure)) route.add(departure);
+  for (final point in input.waypoints) {
+    if (_isValidPoint(point) &&
+        (route.isEmpty || _distSq(route.last, point) > 0.000001)) {
+      route.add(point);
+    }
+  }
+  if (_isValidPoint(arrival) &&
+      (route.isEmpty || _distSq(route.last, arrival) > 0.000001)) {
+    route.add(arrival);
+  }
+  return route;
+}
+
+List<List<double>> _downsample(List<List<double>> pts, int maxPts) {
+  if (pts.length <= maxPts) return pts;
+  final result = <List<double>>[];
+  final last = pts.length - 1;
+  for (int i = 0; i < maxPts; i++) {
+    final index = ((i * last) / (maxPts - 1)).round();
+    result.add(pts[index.clamp(0, last)]);
+  }
+  return result;
+}
+
+double _distSq(List<double> a, List<double> b) {
+  final dLat = a[0] - b[0];
+  final dLng = _lngDelta(a[1], b[1]);
+  return dLat * dLat + dLng * dLng;
+}
+
+double _lngDelta(double a, double b) {
+  final diff = (a - b).abs();
+  return diff > 180 ? 360 - diff : diff;
+}
+
+bool _isValidPoint(List<double> p) =>
+    p.length == 2 &&
+    p[0] >= -90 &&
+    p[0] <= 90 &&
+    p[1] >= -180 &&
+    p[1] <= 180 &&
+    !(p[0] == 0 && p[1] == 0);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 class FlightController extends GetxController {
   final count = 0.obs;
 
@@ -24,10 +141,14 @@ class FlightController extends GetxController {
   // ─── Observables ───────────────────────────────────────────────────────────
   final flights = <String, Flight>{}.obs;
   final markers = Rx<Set<Marker>>({});
+  final polylines = Rx<Set<Polyline>>({});
 
   final selectedFlight = Rxn<Flight>();
   final selectedPopup = Rxn<FlightPopup>();
+  final selectedRoute = Rxn<FlightRoute>();
+  final routeFlight = Rxn<Flight>();
   final isLoadingPopup = false.obs;
+  final isLoadingRoute = false.obs;
 
   final mapLoadState = MapLoadState.initial.obs;
   final isRefreshing = false.obs;
@@ -56,6 +177,7 @@ class FlightController extends GetxController {
   Timer? _refreshTimer;
   Timer? _debounceTimer;
   Timer? _markerDebounce;
+  Timer? _polylineDebounce;
 
   BitmapDescriptor? _iconDark;
   BitmapDescriptor? _iconDarkSm;
@@ -67,15 +189,23 @@ class FlightController extends GetxController {
 
   bool _isFetching = false;
   bool _isRebuildingMarkers = false;
-  String? _currentSelectedCallsign;
+  bool _isRebuildingPolylines = false;
+  bool _needsPolylineRebuild = false;
+  bool _isCameraMoving = false;
+  String? _currentRouteCallsign;
+  int _polylineBuildToken = 0;
+  String? _lastPolylineKey;
 
-  static const int _maxMarkers = 300;
-  static const Duration _refreshInterval = Duration(seconds: 5);
-  static const Duration _debounceDelay = Duration(milliseconds: 600);
+  static const int _maxMarkers = 50;
+  static const Duration _refreshInterval = Duration(seconds: 15);
+  static const Duration _debounceDelay = Duration(milliseconds: 800);
   static const Duration _markerDebounceDelay = Duration(milliseconds: 100);
+  static const Duration _polylineDebounceDelay = Duration(milliseconds: 200);
 
   AppThemeController get _theme => AppThemeController.to;
   bool get isDarkTheme => _theme.isDark;
+  bool get _isRouteFocusMode =>
+      routeFlight.value != null || isLoadingRoute.value;
 
   @override
   void onInit() {
@@ -84,6 +214,7 @@ class FlightController extends GetxController {
     ever(_theme.isDarkRx, (_) {
       if (mapController != null) _applyMapStyle(mapController!);
       _scheduleMarkerRebuild();
+      _schedulePolylineRebuild();
     });
   }
 
@@ -92,12 +223,17 @@ class FlightController extends GetxController {
     _refreshTimer?.cancel();
     _debounceTimer?.cancel();
     _markerDebounce?.cancel();
+    _polylineDebounce?.cancel();
     _apiService.dispose();
     detailService.dispose();
     searchController.dispose();
     mapController?.dispose();
     super.onClose();
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INIT
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Future<void> _init() async {
     mapLoadState.value = MapLoadState.locating;
@@ -115,16 +251,18 @@ class FlightController extends GetxController {
         perm = await Geolocator.requestPermission();
       }
       if (perm == LocationPermission.deniedForever) return;
-
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.low,
       ).timeout(const Duration(seconds: 8));
-
       _currentCenter = LatLng(pos.latitude, pos.longitude);
     } catch (e) {
       log('[FlightController] Location error: $e');
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MAP CALLBACKS
+  // ═══════════════════════════════════════════════════════════════════════════
 
   void setMiniMapMode(bool mini) {
     isMiniMapMode.value = mini;
@@ -142,18 +280,25 @@ class FlightController extends GetxController {
   }
 
   void onCameraMove(CameraPosition pos) {
+    _isCameraMoving = true;
     _currentCenter = pos.target;
     _currentZoom = pos.zoom;
     _debounceTimer?.cancel();
   }
 
   void onCameraIdle() {
+    _isCameraMoving = false;
     _debounceTimer?.cancel();
+    if (_isRouteFocusMode) return;
     _debounceTimer = Timer(_debounceDelay, fetchFlights);
   }
 
   void toggleMapTheme() => _theme.toggle();
   void setMapThemeDark(bool dark) => _theme.setDark(dark);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SEARCH
+  // ═══════════════════════════════════════════════════════════════════════════
 
   void openSearch() => isSearchOpen.value = true;
 
@@ -172,13 +317,11 @@ class FlightController extends GetxController {
   void submitSearch(String query) {
     final q = query.trim().toUpperCase();
     if (q.isEmpty) return;
-
     final matches = flights.values.where((f) {
       return f.callsign.toUpperCase().contains(q) ||
           f.icao.toUpperCase().contains(q) ||
           f.registration.toUpperCase().contains(q);
     }).toList();
-
     if (matches.isNotEmpty) {
       selectFlight(matches.first);
       mapController?.animateCamera(
@@ -193,8 +336,12 @@ class FlightController extends GetxController {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DATA FETCHING
+  // ═══════════════════════════════════════════════════════════════════════════
+
   Future<void> fetchFlights() async {
-    if (_isFetching) return;
+    if (_isFetching || _isRouteFocusMode) return;
     _isFetching = true;
     isRefreshing.value = true;
     errorMessage.value = '';
@@ -209,13 +356,19 @@ class FlightController extends GetxController {
         limit: _maxMarkers,
       );
 
+      if (_isRouteFocusMode) return;
+
       _updateFlightData(fetched);
       _scheduleMarkerRebuild();
       _updateStats();
       lastUpdated.value = DateTime.now();
+
+      _refreshActiveRoutePosition();
     } on FlightApiException catch (e) {
+      if (_isRouteFocusMode) return;
       _setError(e.message);
     } catch (e) {
+      if (_isRouteFocusMode) return;
       _setError('Unexpected error occurred');
       log('[FlightController] Error: $e');
     } finally {
@@ -238,7 +391,29 @@ class FlightController extends GetxController {
         selectedFlight.value = updated;
       }
     }
+
+    if (routeFlight.value != null) {
+      final updated = flights[routeFlight.value!.icao];
+      if (updated != null) {
+        routeFlight.value = updated;
+      }
+    }
   }
+
+  void _refreshActiveRoutePosition() {
+    final flight = routeFlight.value;
+    final route = selectedRoute.value;
+    if (flight == null || route == null) return;
+
+    final key = _polylineKey(flight, route);
+    if (key != _lastPolylineKey) {
+      _schedulePolylineRebuild();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MARKERS
+  // ═══════════════════════════════════════════════════════════════════════════
 
   void _scheduleMarkerRebuild() {
     _markerDebounce?.cancel();
@@ -252,16 +427,17 @@ class FlightController extends GetxController {
     try {
       final flightList = flights.values.toList();
       final q = searchQuery.value;
-      final selectedIcao = selectedFlight.value?.icao ?? '';
+      final selectedIcao =
+          selectedFlight.value?.icao ?? routeFlight.value?.icao ?? '';
       final zoom = _currentZoom;
       final dark = isDarkTheme;
 
       var filtered = q.isNotEmpty
           ? flightList.where((f) {
-        return f.callsign.toUpperCase().contains(q) ||
-            f.icao.toUpperCase().contains(q) ||
-            f.registration.toUpperCase().contains(q);
-      }).toList()
+              return f.callsign.toUpperCase().contains(q) ||
+                  f.icao.toUpperCase().contains(q) ||
+                  f.registration.toUpperCase().contains(q);
+            }).toList()
           : flightList;
 
       filtered.sort((a, b) => b.altitudeFt.compareTo(a.altitudeFt));
@@ -311,7 +487,8 @@ class FlightController extends GetxController {
             flat: true,
             consumeTapEvents: true,
             onTap: () => selectFlight(f),
-            zIndex: isSelected ? 999.0 : (f.altitudeFt / 100).clamp(0, 400),
+            zIndexInt:
+                isSelected ? 999 : (f.altitudeFt / 100).clamp(0, 400).round(),
           ),
         );
       }
@@ -322,17 +499,126 @@ class FlightController extends GetxController {
     }
   }
 
-  // ─── Only popup/details on tap ─────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POLYLINES — memory-safe, isolate-backed
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  void _schedulePolylineRebuild() {
+    if (_isRebuildingPolylines) {
+      _needsPolylineRebuild = true;
+      return;
+    }
+    _polylineDebounce?.cancel();
+    _polylineDebounce = Timer(_polylineDebounceDelay, _rebuildPolylinesAsync);
+  }
+
+  Future<void> _rebuildPolylinesAsync() async {
+    final flight = routeFlight.value;
+    final route = selectedRoute.value;
+
+    if (flight == null || route == null) {
+      polylines.value = {};
+      _lastPolylineKey = null;
+      return;
+    }
+
+    if (_isRebuildingPolylines) return;
+    _isRebuildingPolylines = true;
+    _needsPolylineRebuild = false;
+    final token = ++_polylineBuildToken;
+
+    try {
+      final dark = isDarkTheme;
+      final key = _polylineKey(flight, route);
+
+      // Convert waypoints to plain List<List<double>> for isolate
+      final List<List<double>> waypointData = route.waypoints
+          .map((w) => [w.latitude, w.longitude])
+          .toList(growable: false);
+
+      final result = await compute(
+        _buildPolylinesInIsolate,
+        _PolylineInput(
+          waypoints: waypointData,
+          aircraftLat: flight.latitude,
+          aircraftLng: flight.longitude,
+          arrivalLat: route.arrival.latitude,
+          arrivalLng: route.arrival.longitude,
+          departureLat: route.departure.latitude,
+          departureLng: route.departure.longitude,
+        ),
+      );
+
+      if (token != _polylineBuildToken ||
+          routeFlight.value?.icao != flight.icao ||
+          selectedRoute.value != route ||
+          _polylineKey(routeFlight.value!, route) != key) {
+        _needsPolylineRebuild = true;
+        return;
+      }
+
+      final fullLatLng = result.fullPoints
+          .map((p) => LatLng(p[0], p[1]))
+          .toList(growable: false);
+
+      final newPolylines = <Polyline>{};
+
+      if (fullLatLng.length >= 2) {
+        newPolylines.add(Polyline(
+          polylineId: const PolylineId('selected_route'),
+          points: fullLatLng,
+          color: dark ? const Color(0xFF64B5F6) : const Color(0xFF0D47A1),
+          width: 4,
+          geodesic: true,
+          zIndex: 10,
+        ));
+      }
+
+      polylines.value = newPolylines;
+      _lastPolylineKey = key;
+    } catch (e) {
+      log('[FlightController] polyline build error: $e');
+      polylines.value = {};
+      _lastPolylineKey = null;
+    } finally {
+      _isRebuildingPolylines = false;
+      if (_needsPolylineRebuild) {
+        _schedulePolylineRebuild();
+      }
+    }
+  }
+
+  String _polylineKey(Flight flight, FlightRoute route) {
+    final lat = (flight.latitude * 1000).round();
+    final lng = (flight.longitude * 1000).round();
+    return '${flight.icao}|$lat|$lng|${route.waypoints.length}|$isDarkTheme';
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FLIGHT SELECTION
+  // ═══════════════════════════════════════════════════════════════════════════
+
   void selectFlight(Flight flight) {
     if (isMiniMapMode.value) return;
+
     if (selectedFlight.value?.icao == flight.icao) return;
 
-    _currentSelectedCallsign = flight.callsign;
-    selectedFlight.value = flight;
-    selectedPopup.value = null;
-    isLoadingPopup.value = false;
+    _enterRouteFocusMode();
+    _polylineDebounce?.cancel();
+    _polylineBuildToken++;
+    _lastPolylineKey = null;
 
-    mapController?.animateCamera(
+    _currentRouteCallsign = flight.callsign;
+    selectedFlight.value = flight;
+    routeFlight.value = flight;
+    selectedPopup.value = null;
+    selectedRoute.value = null;
+    isLoadingPopup.value = false;
+    isLoadingRoute.value = false;
+
+    polylines.value = {};
+
+    mapController?.moveCamera(
       CameraUpdate.newLatLngZoom(
         LatLng(flight.latitude, flight.longitude),
         _currentZoom < 7 ? 8 : _currentZoom,
@@ -342,31 +628,63 @@ class FlightController extends GetxController {
     Future.microtask(_rebuildMarkersAsync);
 
     if (flight.callsign.isNotEmpty) {
-      _loadPopup(flight.callsign);
+      _loadRoute(flight.callsign);
     }
   }
 
-  Future<void> _loadPopup(String callsign) async {
-    isLoadingPopup.value = true;
+  void _enterRouteFocusMode() {
+    _debounceTimer?.cancel();
+    _refreshTimer?.cancel();
+    _apiService.cancelActiveRequests();
+    _isFetching = false;
+    isRefreshing.value = false;
+  }
 
+  Future<void> _loadRoute(String callsign) async {
+    isLoadingRoute.value = true;
     try {
-      final popup = await detailService.getPopup(callsign);
+      final route = await detailService.getRoute(callsign);
 
-      // prevent stale response if user tapped another flight
-      if (_currentSelectedCallsign != callsign) return;
+      if (_currentRouteCallsign != callsign) return;
 
-      selectedPopup.value = popup;
+      selectedRoute.value = route;
+
+      if (route != null && routeFlight.value != null) {
+        _schedulePolylineRebuild();
+      }
     } catch (e) {
-      log('[FlightController] popup error: $e');
+      log('[FlightController] route error: $e');
     } finally {
-      if (_currentSelectedCallsign == callsign) {
-        isLoadingPopup.value = false;
+      if (_currentRouteCallsign == callsign) {
+        isLoadingRoute.value = false;
       }
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CLEAR SELECTION  ← called by sheet close button AND map tap
+  // ═══════════════════════════════════════════════════════════════════════════
+
   void clearSelection() {
-    _currentSelectedCallsign = null;
+    _polylineDebounce?.cancel();
+    _polylineBuildToken++;
+
+    _currentRouteCallsign = null;
+    selectedFlight.value = null;
+    selectedPopup.value = null;
+    selectedRoute.value = null;
+    routeFlight.value = null;
+    isLoadingPopup.value = false;
+    isLoadingRoute.value = false;
+
+    polylines.value = {};
+    _lastPolylineKey = null;
+
+    _scheduleMarkerRebuild();
+    _startAutoRefresh();
+  }
+
+  void closeFlightSheet() {
     selectedFlight.value = null;
     selectedPopup.value = null;
     isLoadingPopup.value = false;
@@ -374,20 +692,27 @@ class FlightController extends GetxController {
   }
 
   void clearSelectionForMiniMap() {
-    if (selectedFlight.value != null) clearSelection();
+    if (selectedFlight.value != null || routeFlight.value != null) {
+      clearSelection();
+    }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UTILITIES
+  // ═══════════════════════════════════════════════════════════════════════════
 
   Future<void> centerOnUser() async {
     await _getUserLocation();
-    mapController?.animateCamera(
+    mapController?.moveCamera(
       CameraUpdate.newCameraPosition(
         CameraPosition(target: _currentCenter, zoom: 7),
       ),
     );
-    fetchFlights();
+    if (!_isRouteFocusMode) fetchFlights();
   }
 
   Future<void> manualRefresh() async {
+    if (_isRouteFocusMode) return;
     _debounceTimer?.cancel();
     detailService.clearCache();
     await fetchFlights();
@@ -395,7 +720,9 @@ class FlightController extends GetxController {
 
   void _startAutoRefresh() {
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(_refreshInterval, (_) => fetchFlights());
+    _refreshTimer = Timer.periodic(_refreshInterval, (_) {
+      if (!_isCameraMoving && !_isRouteFocusMode) fetchFlights();
+    });
   }
 
   void _setError(String msg) {
@@ -415,11 +742,15 @@ class FlightController extends GetxController {
   }
 
   LatLngBounds _fallbackBounds() => LatLngBounds(
-    southwest:
-    LatLng(_currentCenter.latitude - 5, _currentCenter.longitude - 5),
-    northeast:
-    LatLng(_currentCenter.latitude + 5, _currentCenter.longitude + 5),
-  );
+        southwest: LatLng(
+          _currentCenter.latitude - 5,
+          _currentCenter.longitude - 5,
+        ),
+        northeast: LatLng(
+          _currentCenter.latitude + 5,
+          _currentCenter.longitude + 5,
+        ),
+      );
 
   void _updateStats() {
     final list = flights.values.toList();
@@ -435,18 +766,30 @@ class FlightController extends GetxController {
   LatLng get initialCameraPosition => _currentCenter;
   double get initialZoom => _currentZoom;
 
+  void increment() => count.value++;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ICONS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   Future<void> _preloadIcons() async {
     try {
       final results = await Future.wait([
-        _makeIcon(48, const Color(0xFF0D47A1), Colors.white, Colors.white, false),
-        _makeIcon(28, const Color(0xFF0D47A1), Colors.white, Colors.white, false),
-        _makeIcon(36, const Color(0xFF37474F), Colors.white, Colors.white, true),
-        _makeIcon(48, Colors.white, const Color(0xFF0D47A1), const Color(0xFF0D47A1), false),
-        _makeIcon(28, Colors.white, const Color(0xFF0D47A1), const Color(0xFF0D47A1), false),
-        _makeIcon(36, const Color(0xFFEEEEEE), const Color(0xFF37474F), const Color(0xFF37474F), true),
-        _makeIcon(54, const Color(0xFF00C853), Colors.white, Colors.white, false),
+        _makeIcon(
+            48, const Color(0xFF0D47A1), Colors.white, Colors.white, false),
+        _makeIcon(
+            28, const Color(0xFF0D47A1), Colors.white, Colors.white, false),
+        _makeIcon(
+            36, const Color(0xFF37474F), Colors.white, Colors.white, true),
+        _makeIcon(48, Colors.white, const Color(0xFF0D47A1),
+            const Color(0xFF0D47A1), false),
+        _makeIcon(28, Colors.white, const Color(0xFF0D47A1),
+            const Color(0xFF0D47A1), false),
+        _makeIcon(36, const Color(0xFFEEEEEE), const Color(0xFF37474F),
+            const Color(0xFF37474F), true),
+        _makeIcon(
+            54, const Color(0xFF00C853), Colors.white, Colors.white, false),
       ]);
-
       _iconDark = results[0];
       _iconDarkSm = results[1];
       _iconDarkGround = results[2];
@@ -460,12 +803,12 @@ class FlightController extends GetxController {
   }
 
   Future<BitmapDescriptor> _makeIcon(
-      int size,
-      Color bg,
-      Color plane,
-      Color border,
-      bool isGround,
-      ) async {
+    int size,
+    Color bg,
+    Color plane,
+    Color border,
+    bool isGround,
+  ) async {
     final rec = ui.PictureRecorder();
     final canvas = Canvas(rec);
     final s = size.toDouble();
@@ -477,9 +820,7 @@ class FlightController extends GetxController {
         ..color = Colors.black.withOpacity(0.35)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
     );
-
     canvas.drawCircle(Offset(s / 2, s / 2), s / 2.3, Paint()..color = bg);
-
     canvas.drawCircle(
       Offset(s / 2, s / 2),
       s / 2.3,
@@ -542,6 +883,4 @@ class FlightController extends GetxController {
           : AppThemeController.brightMapStyle,
     );
   }
-
-  void increment() => count.value++;
 }

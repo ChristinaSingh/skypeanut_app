@@ -87,6 +87,10 @@ class _SheetContent extends GetView<FlightController> {
                   _RouteCard(flight: flight, theme: theme),
                   const SizedBox(height: 12),
 
+                  // Route line info badge
+                  _RouteLineBadge(theme: theme),
+                  const SizedBox(height: 12),
+
                   // Live data row
                   _LiveDataRow(flight: flight, theme: theme),
                   const SizedBox(height: 12),
@@ -109,6 +113,128 @@ class _SheetContent extends GetView<FlightController> {
   }
 }
 
+// ── Route Line Badge ──────────────────────────────────────────────────────────
+class _RouteLineBadge extends GetView<FlightController> {
+  final AppThemeController theme;
+
+  const _RouteLineBadge({required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final isLoading = controller.isLoadingRoute.value;
+      final route = controller.selectedRoute.value;
+
+      if (isLoading) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: theme.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: theme.primary.withOpacity(0.2)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: theme.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Loading flight route…',
+                style: TextStyle(
+                  color: theme.primary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+
+      if (route == null) return const SizedBox.shrink();
+
+      final dep = route.departure.airportCode;
+      final arr = route.arrival.airportCode;
+      final distKm = route.distanceKm;
+      final waypointCount = route.waypoints.length;
+
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.primary.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: theme.primary.withOpacity(0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.route_rounded,
+              size: 16,
+              color: theme.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'Route shown on map  ',
+                      style: TextStyle(
+                        color: theme.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    TextSpan(
+                      text: '$dep → $arr',
+                      style: TextStyle(
+                        color: theme.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (distKm != null)
+                      TextSpan(
+                        text: '  •  ${distKm.toStringAsFixed(0)} km',
+                        style: TextStyle(
+                          color: theme.primary.withOpacity(0.7),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.primary.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '$waypointCount pts',
+                style: TextStyle(
+                  color: theme.primary,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
 // ── Header ────────────────────────────────────────────────────────────────────
 class _SheetHeader extends StatelessWidget {
   final Flight flight;
@@ -127,7 +253,6 @@ class _SheetHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 8, 16, 12),
       child: Row(
         children: [
-          // Airline badge
           Container(
             width: 48,
             height: 48,
@@ -154,8 +279,6 @@ class _SheetHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-
-          // Callsign + aircraft
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -199,8 +322,6 @@ class _SheetHeader extends StatelessWidget {
               ],
             ),
           ),
-
-          // Close
           GestureDetector(
             onTap: onClose,
             child: Container(
@@ -289,22 +410,33 @@ class _RouteCard extends GetView<FlightController> {
       ),
       child: Obx(() {
         final popup = controller.selectedPopup.value;
+        final route = controller.selectedRoute.value;
         final isLoading = controller.isLoadingPopup.value;
 
-        final depCode = popup?.departure?.airportCode.isNotEmpty == true
+        // Prefer route data for airport info, fallback to popup, then flight
+        final depCode = route?.departure.airportCode.isNotEmpty == true
+            ? route!.departure.airportCode
+            : popup?.departure?.airportCode.isNotEmpty == true
             ? popup!.departure!.airportCode
             : flight.departure;
 
-        final arrCode = popup?.arrival?.airportCode.isNotEmpty == true
+        final arrCode = route?.arrival.airportCode.isNotEmpty == true
+            ? route!.arrival.airportCode
+            : popup?.arrival?.airportCode.isNotEmpty == true
             ? popup!.arrival!.airportCode
             : flight.arrival;
 
-        final depName = popup?.departure?.name ?? '';
-        final arrName = popup?.arrival?.name ?? '';
-        final depCountry = popup?.departure?.country ?? '';
-        final arrCountry = popup?.arrival?.country ?? '';
-        final distKm = popup?.distanceKm;
-        final distNm = popup?.distanceNm;
+        final depName =
+            route?.departure.name ?? popup?.departure?.name ?? '';
+        final arrName =
+            route?.arrival.name ?? popup?.arrival?.name ?? '';
+        final depCountry =
+            route?.departure.country ?? popup?.departure?.country ?? '';
+        final arrCountry =
+            route?.arrival.country ?? popup?.arrival?.country ?? '';
+
+        final distKm = route?.distanceKm ?? popup?.distanceKm;
+        final distNm = route?.distanceNm ?? popup?.distanceNm;
 
         return Column(
           children: [
@@ -490,7 +622,8 @@ class _ProgressBar extends StatelessWidget {
           child: LinearProgressIndicator(
             value: progress,
             backgroundColor: theme.border,
-            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0D47A1)),
+            valueColor:
+            const AlwaysStoppedAnimation<Color>(Color(0xFF0D47A1)),
             minHeight: 6,
           ),
         ),
@@ -629,45 +762,41 @@ class _EtaSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mins    = flight.etaMinutes;
+    final mins = flight.etaMinutes;
     final etaTime = flight.etaTimeFormatted;
-    final etaDur  = flight.etaDurationFormatted;
+    final etaDur = flight.etaDurationFormatted;
 
-    // ── Colour tier ───────────────────────────────────────────────────────────
     final Color accent;
     final IconData planeIcon;
     final String phaseLabel;
 
     if (mins != null && mins <= 5) {
-      accent     = const Color(0xFF00C853);
-      planeIcon  = Icons.flight_land_rounded;
+      accent = const Color(0xFF00C853);
+      planeIcon = Icons.flight_land_rounded;
       phaseLabel = '🛬  Final approach';
     } else if (mins != null && mins <= 15) {
-      accent     = const Color(0xFF00C853);
-      planeIcon  = Icons.flight_land_rounded;
+      accent = const Color(0xFF00C853);
+      planeIcon = Icons.flight_land_rounded;
       phaseLabel = '🟢  Landing soon';
     } else if (mins != null && mins <= 45) {
-      accent     = const Color(0xFFFF8F00);
-      planeIcon  = Icons.flight_rounded;
+      accent = const Color(0xFFFF8F00);
+      planeIcon = Icons.flight_rounded;
       phaseLabel = '🟡  Approaching destination';
     } else if (mins != null && mins <= 120) {
-      accent     = const Color(0xFF0D47A1);
-      planeIcon  = Icons.flight_rounded;
+      accent = const Color(0xFF0D47A1);
+      planeIcon = Icons.flight_rounded;
       phaseLabel = '🔵  Cruising';
     } else {
-      accent     = const Color(0xFF0D47A1);
-      planeIcon  = Icons.flight_rounded;
+      accent = const Color(0xFF0D47A1);
+      planeIcon = Icons.flight_rounded;
       phaseLabel = '✈️  En route';
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Section title ─────────────────────────────────────────────────
         _SectionTitle('ESTIMATED ARRIVAL', theme),
         const SizedBox(height: 10),
-
-        // ── Main card ─────────────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -680,10 +809,8 @@ class _EtaSection extends StatelessWidget {
           ),
           child: Column(
             children: [
-              // ── Top row: icon circle + big time + countdown pill ──────
               Row(
                 children: [
-                  // Icon circle
                   Container(
                     width: 50,
                     height: 50,
@@ -693,10 +820,7 @@ class _EtaSection extends StatelessWidget {
                     ),
                     child: Icon(planeIcon, color: accent, size: 24),
                   ),
-
                   const SizedBox(width: 12),
-
-                  // ETA clock display
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -722,8 +846,6 @@ class _EtaSection extends StatelessWidget {
                       ],
                     ),
                   ),
-
-                  // Countdown pill
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
@@ -765,8 +887,6 @@ class _EtaSection extends StatelessWidget {
                   ),
                 ],
               ),
-
-              // ── Progress bar ──────────────────────────────────────────
               if (mins != null) ...[
                 const SizedBox(height: 16),
                 _EtaProgressRow(
@@ -775,8 +895,6 @@ class _EtaSection extends StatelessWidget {
                   theme: theme,
                 ),
               ],
-
-              // ── Phase label chip ──────────────────────────────────────
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -820,7 +938,6 @@ class _EtaProgressRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 300 min = reference max; closer to 0 min = more progress filled
     const maxRef = 300;
     final elapsed = (maxRef - minutes).clamp(0, maxRef);
     final progress = elapsed / maxRef;
@@ -829,15 +946,12 @@ class _EtaProgressRow extends StatelessWidget {
       children: [
         Row(
           children: [
-            // Takeoff icon
             Icon(
               Icons.flight_takeoff_rounded,
               size: 15,
               color: theme.textSub,
             ),
             const SizedBox(width: 6),
-
-            // Bar + plane cursor
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -848,7 +962,6 @@ class _EtaProgressRow extends StatelessWidget {
                   return Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      // Track
                       Container(
                         height: 6,
                         decoration: BoxDecoration(
@@ -856,7 +969,6 @@ class _EtaProgressRow extends StatelessWidget {
                           borderRadius: BorderRadius.circular(4),
                         ),
                       ),
-                      // Filled portion
                       FractionallySizedBox(
                         widthFactor: progress.clamp(0.02, 1.0),
                         child: Container(
@@ -872,7 +984,6 @@ class _EtaProgressRow extends StatelessWidget {
                           ),
                         ),
                       ),
-                      // Plane cursor sitting on top of bar tip
                       Positioned(
                         left: cursorLeft.clamp(0.0, barWidth - 14),
                         top: -5,
@@ -887,9 +998,7 @@ class _EtaProgressRow extends StatelessWidget {
                 },
               ),
             ),
-
             const SizedBox(width: 6),
-            // Land icon
             Icon(
               Icons.flight_land_rounded,
               size: 15,
@@ -897,10 +1006,7 @@ class _EtaProgressRow extends StatelessWidget {
             ),
           ],
         ),
-
         const SizedBox(height: 6),
-
-        // Remaining minutes label
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -970,7 +1076,6 @@ class _PopupDetails extends GetView<FlightController> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Aircraft info row
           _InfoRow(
             items: [
               _InfoItem('ICAO24', popup.icao24, theme),
@@ -979,8 +1084,6 @@ class _PopupDetails extends GetView<FlightController> {
             ],
           ),
           const SizedBox(height: 12),
-
-          // Destination weather
           if (popup.destWeather != null) ...[
             _SectionTitle('DESTINATION WEATHER', theme),
             const SizedBox(height: 8),
@@ -1101,7 +1204,6 @@ class _WeatherCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Rules badge + raw METAR
           Row(
             children: [
               Container(
@@ -1136,10 +1238,7 @@ class _WeatherCard extends StatelessWidget {
               ),
             ],
           ),
-
           const SizedBox(height: 10),
-
-          // Weather stats grid
           Row(
             children: [
               _WeatherStat('🌡', 'TEMP', weather.tempFormatted, theme),
@@ -1148,8 +1247,6 @@ class _WeatherCard extends StatelessWidget {
               _WeatherStat('📊', 'QNH', weather.pressureFormatted, theme),
             ],
           ),
-
-          // Wx codes
           if (weather.wxCodes.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -1157,8 +1254,8 @@ class _WeatherCard extends StatelessWidget {
               runSpacing: 4,
               children: weather.wxCodes.map((wx) {
                 return Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: theme.loading.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(6),
@@ -1177,8 +1274,6 @@ class _WeatherCard extends StatelessWidget {
               }).toList(),
             ),
           ],
-
-          // Cloud layers
           if (weather.clouds.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -1186,8 +1281,8 @@ class _WeatherCard extends StatelessWidget {
               runSpacing: 4,
               children: weather.clouds.map((c) {
                 return Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: theme.cardAlt,
                     borderRadius: BorderRadius.circular(6),

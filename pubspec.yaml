@@ -51,9 +51,11 @@ dependencies:
   firebase_core: ^3.13.0
   firebase_auth: ^5.3.1
   google_sign_in: ^6.2.1
-  flutter_local_notifications: ^19.0.0
   uuid: ^4.5.1
   google_maps_flutter: ^2.8.0
+  timezone: ^0.10.1        # ✅ Change from ^0.9.4 to ^0.10.1
+  flutter_timezone: ^2.0.0
+  flutter_local_notifications: ^19.0.0
 
 
 dev_dependencies:

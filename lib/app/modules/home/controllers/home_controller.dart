@@ -8,7 +8,6 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:skypeanut/app/data/apis/api_models/get_weather_model.dart';
 
-// import '../../../common/common_widgets.dart';
 import '../../../common/colors.dart';
 import '../../../routes/app_pages.dart';
 import '../../../common/weather_convter.dart';
@@ -24,6 +23,10 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../Weather_settings_screen/controllers/weather_settings_screen_controller.dart';
 import '../../../data/services/connectivity_controller.dart';
 
+import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz_data;
+
 class HomeController extends GetxController {
   var temperature = "2.4".obs;
   var dewDew = "2.4".obs;
@@ -33,24 +36,24 @@ class HomeController extends GetxController {
   RxString forecast = "null".obs;
   RxString lat = "".obs;
   RxString long = "".obs;
-  RxString due = "56".obs;      
+  RxString due = "56".obs;
 
-  // Add these two observables near the top with the others:
   RxString windDirection = "".obs;
   RxInt aqiUs = 0.obs;
   RxString aqiCategory = "".obs;
   RxDouble aqiPm25 = 0.0.obs;
 
-  // otherwise it might be RxDouble if it's a dew point temperature.
-  // Your original code has "56".obs, making it RxString.
   RxString date = 'June 07'.obs;
   RxString rawDate = '6/7/2023 4:55 PM'.obs;
   RxString city = 'Paris'.obs;
   RxString name = 'Johan Wick'.obs;
-  final RxBool inAsyncCall = true.obs; // final RxBool is also valid
-  final RxBool inAsyncCallForForecast = true.obs; // final RxBool is also valid
-  final RxBool inAsyncCallForAlert = true.obs; // final RxBool is also valid
+  final RxBool inAsyncCall = true.obs;
+  final RxBool inAsyncCallForForecast = true.obs;
+  final RxBool inAsyncCallForAlert = true.obs;
   final RxBool isOffline = false.obs;
+
+  /// ✅ NEW: Track whether it's day or night based on API timestamp
+  RxBool isNightTime = false.obs;
 
   // Cache Keys
   static const String keyProfile = "cache_profile";
@@ -67,12 +70,12 @@ class HomeController extends GetxController {
   var pressureUnit = "hPA".obs;
 
   WeatherSettingsScreenController settings =
-      Get.find<WeatherSettingsScreenController>();
+  Get.find<WeatherSettingsScreenController>();
 
   List<Alerts> alertsList = [];
-  Weather? weather; // This is already explicitly typed
+  Weather? weather;
 
-  final RxInt count = 0.obs; // final RxInt is also valid
+  final RxInt count = 0.obs;
 
   RxInt currentPage = 0.obs;
 
@@ -84,9 +87,14 @@ class HomeController extends GetxController {
 
   List<Data>? getNotamData;
 
+  /// ✅ NEW: Store the API timestamp as DateTime (UTC)
+  DateTime? _apiTimestampUtc;
+
   @override
   Future<void> onInit() async {
     super.onInit();
+
+    tz_data.initializeTimeZones();
 
     // Global connectivity listener
     final connectivity = Get.find<ConnectivityController>();
@@ -94,7 +102,6 @@ class HomeController extends GetxController {
       bool offline =
           results.contains(ConnectivityResult.none) && results.length == 1;
       if (!offline && isOffline.value) {
-        // Transitioned from offline to online
         refetchData();
       }
       isOffline.value = offline;
@@ -103,12 +110,11 @@ class HomeController extends GetxController {
     SharedPreferences sp = await SharedPreferences.getInstance();
     userId = sp.getString(ApiKeyConstants.userId) ?? '';
 
-    // Load initial data from cache to populate UI immediately
     _loadInitialCache();
 
     getProfileApi();
     setCurrentDate();
-    getFullDate();
+    getFullDate(); // fallback: use device time initially
     getCurrentLocation();
   }
 
@@ -150,10 +156,19 @@ class HomeController extends GetxController {
   }
 
   Future<void> _loadWeatherFromCache() async {
+    // ✅ Load cached lat/lon first
+    final sp = await SharedPreferences.getInstance();
+    final cachedLat = sp.getString("cached_lat") ?? "";
+    final cachedLon = sp.getString("cached_lon") ?? "";
+
     var cached = await _loadFromCache(keyWeather);
     if (cached != null) {
       GetWeatherAppModel model = GetWeatherAppModel.fromJson(cached);
-      _processWeatherData(model);
+      _processWeatherData(
+        model,
+        latParam: cachedLat,  // ✅ use cached lat/lon
+        lonParam: cachedLon,  // ✅ use cached lat/lon
+      );
     }
   }
 
@@ -161,7 +176,7 @@ class HomeController extends GetxController {
     var cached = await _loadFromCache(keyForecast);
     if (cached != null) {
       UpcomingForecastWeeklyModel model =
-          UpcomingForecastWeeklyModel.fromJson(cached);
+      UpcomingForecastWeeklyModel.fromJson(cached);
       _processForecastData(model);
     }
   }
@@ -190,11 +205,115 @@ class HomeController extends GetxController {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  // ✅ NEW HELPER: Convert API timestamp → formatted date string
+  //               AND determine day/night for background image
+  // ─────────────────────────────────────────────────────────────────
+
+  /// Converts a Unix timestamp (seconds) from the API to a human-readable
+  /// date-time string using the device's local timezone, then updates
+  /// [rawDate] and [isNightTime].
+  ///
+  /// Night   = 18:00 – 05:59  (local time)
+  /// Day     = 06:00 – 17:59  (local time)
+  /// ✅ FIXED: Convert timestamp using the LOCATION's timezone
+  /// determined by calling a timezone API with lat/lon
+  Future<void> _updateDateTimeFromTimestamp(
+      dynamic rawTimestamp,
+      String lat,
+      String lon,
+      ) async {
+    if (rawTimestamp == null) return;
+
+    // ── Parse timestamp ───────────────────────────────────────────────
+    int? tsSeconds;
+    if (rawTimestamp is int) {
+      tsSeconds = rawTimestamp;
+    } else if (rawTimestamp is String) {
+      tsSeconds = int.tryParse(rawTimestamp);
+    } else if (rawTimestamp is double) {
+      tsSeconds = rawTimestamp.toInt();
+    }
+    if (tsSeconds == null) return;
+
+    // ── UTC DateTime ──────────────────────────────────────────────────
+    _apiTimestampUtc =
+        DateTime.fromMillisecondsSinceEpoch(tsSeconds * 1000, isUtc: true);
+
+    // ── Get timezone name for the given lat/lon ───────────────────────
+    String timezoneName = await _getTimezoneForLocation(lat, lon);
+    print("Timezone for ($lat, $lon): $timezoneName");
+
+    // ── Convert UTC → location's local time ──────────────────────────
+    final location = tz.getLocation(timezoneName);
+    final locationDt = tz.TZDateTime.from(_apiTimestampUtc!, location);
+
+    // ── Format for UI ─────────────────────────────────────────────────
+    rawDate.value = DateFormat('M/d/yyyy h:mm a').format(locationDt);
+    date.value = DateFormat('MMMM dd').format(locationDt);
+
+    // ── Day / Night ───────────────────────────────────────────────────
+    final hour = locationDt.hour;
+    isNightTime.value = (hour < 6 || hour >= 18);
+
+    print(
+      "UTC:      $_apiTimestampUtc\n"
+          "Location: $locationDt  (${timezoneName})\n"
+          "Hour:     $hour  →  isNight: ${isNightTime.value}",
+    );
+  }
+
+  /// Returns IANA timezone name for lat/lon
+  /// Uses free timezone API (no key needed)
+  Future<String> _getTimezoneForLocation(String lat, String lon) async {
+    // ── Try cache first ───────────────────────────────────────────────
+    final prefs = await SharedPreferences.getInstance();
+    final cacheKey = "tz_${lat}_${lon}";
+    final cached = prefs.getString(cacheKey);
+    if (cached != null) return cached;
+
+    // ── Fetch from API ────────────────────────────────────────────────
+    try {
+      final url =
+          'https://timeapi.io/api/timezone/coordinate?latitude=$lat&longitude=$lon';
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final tzName = data['timeZone'] as String? ?? 'UTC';
+
+        // Cache it — timezone for a location never changes
+        await prefs.setString(cacheKey, tzName);
+        return tzName;
+      }
+    } catch (e) {
+      print("Timezone API error: $e");
+    }
+
+    // ── Fallback: rough offset from longitude ─────────────────────────
+    return _guessTzFromLon(double.tryParse(lon) ?? 0);
+  }
+
+  /// Very rough fallback: guess UTC offset from longitude
+  /// (±15° per hour, 0° = UTC)
+  String _guessTzFromLon(double lon) {
+    // Each 15 degrees = 1 hour offset
+    int offsetHours = (lon / 15).round().clamp(-12, 14);
+    if (offsetHours == 0) return 'UTC';
+    // IANA names like "Etc/GMT+5" — note sign is INVERTED in Etc/GMT
+    // Etc/GMT+N means UTC-N  ← confusing but correct
+    return offsetHours > 0
+        ? 'Etc/GMT-$offsetHours'   // e.g. UTC+5 → Etc/GMT-5
+        : 'Etc/GMT+${offsetHours.abs()}'; // e.g. UTC-8 → Etc/GMT+8
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+
   Future<void> getNotamBYAirportData(String airportCode) async {
     try {
       inAsyncCall.value = true;
       NotamModel? notamModel =
-          await ApiMethods.getNotamBYAirport(bodyParams: airportCode);
+      await ApiMethods.getNotamBYAirport(bodyParams: airportCode);
       if (notamModel != null && notamModel.success == true) {
         getNotamData = notamModel.data;
         _saveToCache(keyNotams, notamModel.toJson());
@@ -220,7 +339,7 @@ class HomeController extends GetxController {
         ApiKeyConstants.lon: long,
       };
       NearbyAirportModel? nearbyAirportModel =
-          await ApiMethods.getNearbyByAirport(bodyParams: bodyParameter);
+      await ApiMethods.getNearbyByAirport(bodyParams: bodyParameter);
 
       if (nearbyAirportModel != null && nearbyAirportModel.status != "0") {
         _processNearbyAirportsData(nearbyAirportModel);
@@ -255,7 +374,7 @@ class HomeController extends GetxController {
         ApiKeyConstants.userId: userId,
       };
       GetProfileModel? getProfileModel =
-          await ApiMethods.getProfile(bodyParams: bodyParameter);
+      await ApiMethods.getProfile(bodyParams: bodyParameter);
       if (getProfileModel != null && getProfileModel.status == '1') {
         getProfileModelData = getProfileModel;
         userName.value = getProfileModel.fullName ?? '';
@@ -273,7 +392,7 @@ class HomeController extends GetxController {
 
   void setCurrentDate() {
     DateTime now = DateTime.now();
-    String formattedDate = DateFormat('MMMM dd').format(now); // e.g. "June 07"
+    String formattedDate = DateFormat('MMMM dd').format(now);
     date.value = formattedDate;
   }
 
@@ -281,44 +400,25 @@ class HomeController extends GetxController {
     return DateFormat('M/d/yyyy h:mm a').format(dateTime);
   }
 
+  /// Fallback: use device clock when no API timestamp is available yet
   void getFullDate() {
     DateTime now = DateTime.now();
-    String formattedDate = formatDateTime(now);
-    print(formattedDate); // Output: "6/7/2025 4:55 PM"
-    rawDate.value = formattedDate;
+    rawDate.value = formatDateTime(now);
+
+    // Also set initial day/night from device clock
+    final hour = now.hour;
+    isNightTime.value = (hour < 6 || hour >= 18);
+
+    print(rawDate.value);
   }
 
   @override
   void onClose() {
-    stopWeatherPolling();     // ✅ stop timer
-    timer?.cancel();          // your existing auto scroll timer
+    stopWeatherPolling();
+    timer?.cancel();
     pageController.dispose();
     super.onClose();
   }
-
-  // Future<void> getUpcomingForecast(String lat, String long) async {
-  //   inAsyncCallForForecast.value = true;
-  //   // Explicit type for bodyParameter
-  //   Map<String, dynamic> bodyParameter = {
-  //     ApiKeyConstants.lat: lat,
-  //     ApiKeyConstants.lon: long,
-  //     ApiKeyConstants.type: "weekly",
-  //   };
-  //   print("bodyParameter $bodyParameter");
-  //
-  //   // Explicit type for getWeatherAppModel
-  //   UpcomingForecastWeeklyModel? upcomingForecastWeeklyModel =
-  //       await ApiMethods.upcomingForecastApi(bodyParams: bodyParameter);
-  //
-  //   if (upcomingForecastWeeklyModel != null &&
-  //       upcomingForecastWeeklyModel.forecast != null) {
-  //     forecastList = upcomingForecastWeeklyModel.forecast ?? [];
-  //     inAsyncCallForForecast.value = false;
-  //     increment();
-  //   } else {
-  //     inAsyncCallForForecast.value = false;
-  //   }
-  // }
 
   Future<void> getUpcomingForecast(String lat, String long) async {
     try {
@@ -331,7 +431,7 @@ class HomeController extends GetxController {
       };
 
       UpcomingForecastWeeklyModel? upcomingForecastWeeklyModel =
-          await ApiMethods.upcomingForecastApi(bodyParams: bodyParameter);
+      await ApiMethods.upcomingForecastApi(bodyParams: bodyParameter);
 
       if (upcomingForecastWeeklyModel != null &&
           upcomingForecastWeeklyModel.forecast != null) {
@@ -352,11 +452,9 @@ class HomeController extends GetxController {
 
   void _processForecastData(UpcomingForecastWeeklyModel model) {
     var updatedList = model.forecast!.map((f) {
-      // ✅ Safe value extraction
       double tempC = f.temperature?.day ?? 0;
       double tempF = f.temperatureF?.day ?? 0;
 
-      // ✅ Apply temperature conversion
       if (temperatureUnit.value == "°F") {
         f.temperature?.day = tempF;
       } else {
@@ -369,7 +467,6 @@ class HomeController extends GetxController {
         f.feelsLike?.day = tempC;
       }
 
-      // ✅ Wind conversion
       double windKnots = f.windSpeedKnots ?? 0.0;
       double windMs = f.windSpeedMs ?? 0.0;
       String windKmh = f.windSpeed ?? "0.0";
@@ -382,7 +479,6 @@ class HomeController extends GetxController {
         f.windSpeed = windKnots.toStringAsFixed(1);
       }
 
-      // ✅ Pressure conversion
       if (pressureUnit.value == "inHg") {
         f.pressure = f.pressureInhg;
       } else {
@@ -392,7 +488,6 @@ class HomeController extends GetxController {
       return f;
     }).toList();
 
-    // ✅ Assign reactively so UI updates
     forecastList.assignAll(updatedList);
     increment();
   }
@@ -417,7 +512,6 @@ class HomeController extends GetxController {
     });
   }
 
-  /// API Call
   Future<void> getUpcomingAlert(String icaoCode) async {
     try {
       inAsyncCallForAlert.value = true;
@@ -425,10 +519,8 @@ class HomeController extends GetxController {
         ApiKeyConstants.airportCode2: icaoCode,
       };
 
-      print("bodyParameter $bodyParameter");
-
       AlertsModel? alertsModel =
-          await ApiMethods.upcomingAlertsApi(bodyParams: bodyParameter);
+      await ApiMethods.upcomingAlertsApi(bodyParams: bodyParameter);
 
       if (alertsModel != null && alertsModel.status == '1') {
         _processAlertsData(alertsModel);
@@ -465,12 +557,8 @@ class HomeController extends GetxController {
 
   String extractEmoji(String text) {
     try {
-      // Fix encoding issues first
       String fixed = utf8.decode(text.runes.toList());
-
-      // Keep only emoji-like characters (non a-z, A-Z, 0-9, spaces)
       String emojiOnly = fixed.replaceAll(RegExp(r'[a-zA-Z0-9\s]'), '');
-
       return emojiOnly.trim();
     } catch (_) {
       return text;
@@ -478,18 +566,21 @@ class HomeController extends GetxController {
   }
 
   Future<void> getCurrentLocation() async {
-    // Explicit type for permission
     LocationPermission permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied) {
       print('Permission Denied.....');
       getCurrentLocation();
     } else {
       print('Permission Granted.....');
-      // Explicit type for currentPosition
       Position currentPosition = await Geolocator.getCurrentPosition();
 
       lat.value = currentPosition.latitude.toString();
       long.value = currentPosition.longitude.toString();
+
+      // ✅ Save lat/lon to cache so it's available on next app start
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString("cached_lat", lat.value);
+      await sp.setString("cached_lon", long.value);
 
       await fetchHomeData();
     }
@@ -502,8 +593,6 @@ class HomeController extends GetxController {
       getWeatherApiCalling(lat.value, long.value);
       getUpcomingForecast(lat.value, long.value);
       getNearbyByAirportApiCall(lat.value, long.value);
-
-      // ✅ Start 10-second polling once
       startWeatherPolling();
     } else {
       inAsyncCall.value = false;
@@ -515,7 +604,8 @@ class HomeController extends GetxController {
   Future<bool> _checkAndDeductCredit() async {
     try {
       final response = await http.post(
-        Uri.parse('https://python.aitechnotech.in/skypeanut-api/credits/check-and-deduct'),
+        Uri.parse(
+            'https://python.aitechnotech.in/skypeanut-api/credits/check-and-deduct'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -551,7 +641,7 @@ class HomeController extends GetxController {
   }
 
   void _showWarningDialog() {
-    if (Get.isDialogOpen ?? false) return; // Prevent multiple dialogs
+    if (Get.isDialogOpen ?? false) return;
     Get.dialog(
       Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -610,13 +700,13 @@ class HomeController extends GetxController {
   }
 
   void _showInsufficientCreditsDialog(String message) {
-    if (Get.isDialogOpen ?? false) return; // Prevent multiple dialogs
+    if (Get.isDialogOpen ?? false) return;
     Get.dialog(
       PopScope(
         canPop: false,
         child: Dialog(
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           backgroundColor: Colors.transparent,
           child: Container(
             padding: EdgeInsets.all(24),
@@ -675,105 +765,53 @@ class HomeController extends GetxController {
     );
   }
 
-  Future<void> getWeatherApiCallingq(String lat, String long) async {
-    inAsyncCall.value = true;
-
-    Map<String, dynamic> bodyParameter = {
-      ApiKeyConstants.lat: lat,
-      ApiKeyConstants.lon: long,
-    };
-
-    final getWeatherAppModel =
-        await ApiMethods.getWeatherApi(bodyParams: bodyParameter);
-    final settings = Get.find<WeatherSettingsScreenController>();
-
-    if (getWeatherAppModel != null && getWeatherAppModel.weather != null) {
-      alertsList = getWeatherAppModel.alerts!;
-      final w = getWeatherAppModel.weather!;
-
-      // Convert values using settings
-      double temp = double.tryParse(w.temperature.toString()) ?? 0.0;
-      double dew = double.tryParse(w.dewPoint.toString()) ?? 0.0;
-      double pressureVal = double.tryParse(w.pressure.toString()) ?? 0.0;
-      double wind = double.tryParse(w.windSpeed.toString()) ?? 0.0;
-      double vis = double.tryParse(w.visibility.toString()) ?? 0.0;
-
-      cityOne.value = w.location ?? '';
-
-      temperature.value = WeatherUnitConverter.convertTemperature(
-          temp, settings.temperatureUnit.value);
-      dewDew.value = WeatherUnitConverter.convertTemperature(
-          dew, settings.dewPointUnit.value);
-      pressure.value = WeatherUnitConverter.convertPressure(
-          pressureVal, settings.pressureUnit.value);
-      windSpeed.value =
-          WeatherUnitConverter.convertWind(wind, settings.windUnit.value);
-      visibility.value = WeatherUnitConverter.convertVisibility(
-          vis, settings.visibilityUnit.value);
-
-      forecast.value = w.forecast.toString();
-
-      print("Unit ::::forecast ${forecast.value}");
-      print("Unit ::::forecast ${w.forecast.toString()}");
-
-      inAsyncCall.value = false;
-      increment();
-    } else {
-      inAsyncCall.value = false;
-    }
-  }
-
   Timer? _weatherTimer;
   bool _weatherPollingRunning = false;
   bool _isFetchingWeather = false;
 
-  /// Call this when Home screen becomes visible
   void startWeatherPolling() {
     if (_weatherPollingRunning) return;
     _weatherPollingRunning = true;
 
     _weatherTimer?.cancel();
     _weatherTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
-      // If no location yet, do nothing
       if (lat.value.isEmpty || long.value.isEmpty) return;
-
-      // Prevent overlapping API calls
       if (_isFetchingWeather) return;
 
       _isFetchingWeather = true;
       try {
         await getWeatherApiCalling2(lat.value, long.value);
       } catch (_) {
-        // ignore; you already handle offline/caching in getWeatherApiCalling
       } finally {
         _isFetchingWeather = false;
       }
     });
   }
 
-  /// Call this when Home screen is not visible
   void stopWeatherPolling() {
     _weatherPollingRunning = false;
     _weatherTimer?.cancel();
     _weatherTimer = null;
   }
 
+// ✅ getWeatherApiCalling - pass lat/lon
   Future<void> getWeatherApiCalling(String lat, String long) async {
     try {
       inAsyncCall.value = true;
-      // Explicit type for bodyParameter
       Map<String, dynamic> bodyParameter = {
         ApiKeyConstants.lat: lat,
         ApiKeyConstants.lon: long,
       };
-      print("bodyParameter $bodyParameter");
 
-      // Explicit type for getWeatherAppModel
       GetWeatherAppModel? getWeatherAppModel =
-          await ApiMethods.getWeatherApi(bodyParams: bodyParameter);
+      await ApiMethods.getWeatherApi(bodyParams: bodyParameter);
 
       if (getWeatherAppModel != null && getWeatherAppModel.weather != null) {
-        _processWeatherData(getWeatherAppModel);
+        _processWeatherData(
+          getWeatherAppModel,
+          latParam: lat,   // ✅ pass directly
+          lonParam: long,  // ✅ pass directly
+        );
         _saveToCache(keyWeather, getWeatherAppModel.toJson());
         isOffline.value = false;
       } else {
@@ -787,22 +825,24 @@ class HomeController extends GetxController {
       inAsyncCall.value = false;
     }
   }
+
+// ✅ getWeatherApiCalling2 - pass lat/lon
   Future<void> getWeatherApiCalling2(String lat, String long) async {
     try {
-    //  inAsyncCall.value = true;
-      // Explicit type for bodyParameter
       Map<String, dynamic> bodyParameter = {
         ApiKeyConstants.lat: lat,
         ApiKeyConstants.lon: long,
       };
-      print("bodyParameter $bodyParameter");
 
-      // Explicit type for getWeatherAppModel
       GetWeatherAppModel? getWeatherAppModel =
-          await ApiMethods.getWeatherApi(bodyParams: bodyParameter);
+      await ApiMethods.getWeatherApi(bodyParams: bodyParameter);
 
       if (getWeatherAppModel != null && getWeatherAppModel.weather != null) {
-        _processWeatherData(getWeatherAppModel);
+        _processWeatherData(
+          getWeatherAppModel,
+          latParam: lat,   // ✅ pass directly
+          lonParam: long,  // ✅ pass directly
+        );
         _saveToCache(keyWeather, getWeatherAppModel.toJson());
         isOffline.value = false;
       } else {
@@ -812,12 +852,16 @@ class HomeController extends GetxController {
       print("Weather Data Error: $e");
       isOffline.value = true;
       await _loadWeatherFromCache();
-    } finally {
-     // inAsyncCall.value = false;
     }
   }
 
-  void _processWeatherData(GetWeatherAppModel getWeatherAppModel) async {
+  // ── Core weather processing ───────────────────────────────────────
+// ✅ Accept lat/lon as parameters instead of using RxString
+  void _processWeatherData(
+      GetWeatherAppModel getWeatherAppModel, {
+        String? latParam,
+        String? lonParam,
+      }) async {
     final prefs = await SharedPreferences.getInstance();
     windUnit.value = prefs.getString("windUnit") ?? "Knots";
     visibilityUnit.value = prefs.getString("visibilityUnit") ?? "KM";
@@ -834,18 +878,37 @@ class HomeController extends GetxController {
       aqiPm25.value = aq.pm25 ?? 0.0;
     }
 
+    // ✅ Use passed lat/lon first, fallback to RxString, fallback to cache
+    String resolvedLat = latParam ?? lat.value;
+    String resolvedLon = lonParam ?? long.value;
+
+    // ✅ If still empty, load from SharedPreferences cache
+    if (resolvedLat.isEmpty || resolvedLon.isEmpty) {
+      final sp = await SharedPreferences.getInstance();
+      resolvedLat = sp.getString("cached_lat") ?? "";
+      resolvedLon = sp.getString("cached_lon") ?? "";
+    }
+
+    print("Resolved lat: $resolvedLat, lon: $resolvedLon");
+
+    // ✅ Update date/time with correct lat/lon
+    await _updateDateTimeFromTimestamp(
+      getWeatherAppModel.weather!.timestamp,
+      resolvedLat,
+      resolvedLon,
+    );
+
+    // ... rest of method unchanged ...
     if (temperatureUnit.value == "°F") {
-      temperature.value =
-          getWeatherAppModel.weather!.temperatureF.toString(); // double
+      temperature.value = getWeatherAppModel.weather!.temperatureF.toString();
     } else {
-      temperature.value =
-          getWeatherAppModel.weather!.temperatureC.toString(); // double
+      temperature.value = getWeatherAppModel.weather!.temperatureC.toString();
     }
 
     if (dewPointUnit.value == "°F") {
-      due.value = getWeatherAppModel.weather!.dewPointF.toString(); // double
+      due.value = getWeatherAppModel.weather!.dewPointF.toString();
     } else {
-      due.value = getWeatherAppModel.weather!.dewPointC.toString(); // double
+      due.value = getWeatherAppModel.weather!.dewPointC.toString();
     }
 
     if (pressureUnit.value == "inHg") {
@@ -872,19 +935,16 @@ class HomeController extends GetxController {
 
     alertsList = getWeatherAppModel.alerts!;
     weather = getWeatherAppModel.weather!;
-
     forecast.value = getWeatherAppModel.weather!.forecast ?? "";
+    cityOne.value = getWeatherAppModel.weather!.location ?? '';
 
-    cityOne.value = getWeatherAppModel.weather!.location ?? ''; // String
     increment();
   }
 
   static String formatTimestampToDayDate(int timestamp) {
-    // Convert to UTC and then add IST offset (+5:30)
     DateTime dateUtc =
-        DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true);
+    DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true);
     DateTime istDate = dateUtc.add(const Duration(hours: 5, minutes: 30));
-
     return DateFormat('EEE d').format(istDate);
   }
 
@@ -892,14 +952,10 @@ class HomeController extends GetxController {
 }
 
 class DateHelper {
-  /// Convert timestamp (in seconds) to "Mon 18" format in IST
   static String formatTimestampToDayDate(int timestamp) {
-    // Convert to DateTime in IST
     DateTime date =
-        DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true)
-            .toLocal(); // Converts to local timezone (IST if device is IST)
-
-    // Format: Mon 18
+    DateTime.fromMillisecondsSinceEpoch(timestamp * 1000, isUtc: true)
+        .toLocal();
     return DateFormat('EEE d').format(date);
   }
 }
